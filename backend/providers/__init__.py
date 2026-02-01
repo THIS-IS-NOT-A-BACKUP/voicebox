@@ -10,7 +10,7 @@ from .base import TTSProvider
 from .types import ProviderType
 from .bundled import BundledProvider
 from .local import LocalProvider
-from .installer import get_provider_binary_path
+from .installer import get_provider_binary_path, _get_providers_dir
 from ..config import get_data_dir
 import subprocess
 import socket
@@ -50,38 +50,44 @@ class ProviderManager:
         Args:
             provider_type: Type of provider to start
         """
-        if provider_type in ["bundled-mlx", "bundled-pytorch"]:
-            # Use bundled provider
+        if provider_type == "bundled-mlx":
+            # Use bundled MLX provider
             self.active_provider = self._get_default_provider()
         elif provider_type in ["pytorch-cpu", "pytorch-cuda"]:
-            # Start local provider subprocess
+            # Try to start external provider subprocess if binary exists
             provider_path = get_provider_binary_path(provider_type)
-            if not provider_path or not provider_path.exists():
-                raise ValueError(f"Provider {provider_type} is not installed. Please download it first.")
-            
-            # Find a free port
-            port = self._get_free_port()
-            
-            # Start provider subprocess
-            from ..config import get_data_dir
-            process = subprocess.Popen(
-                [
-                    str(provider_path),
-                    "--port", str(port),
-                    "--data-dir", str(get_data_dir()),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            
-            # Wait for provider to be ready
-            base_url = f"http://127.0.0.1:{port}"
-            await self._wait_for_provider_health(base_url, timeout=30)
-            
-            # Create LocalProvider instance
-            self.active_provider = LocalProvider(base_url)
-            self._provider_process = process
-            self._provider_port = port
+            if provider_path and provider_path.exists():
+                # External downloaded provider exists, start it
+                # Find a free port
+                port = self._get_free_port()
+
+                # Start provider subprocess
+                from ..config import get_data_dir
+                process = subprocess.Popen(
+                    [
+                        str(provider_path),
+                        "--port", str(port),
+                        "--data-dir", str(get_data_dir()),
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+
+                # Wait for provider to be ready
+                base_url = f"http://127.0.0.1:{port}"
+                await self._wait_for_provider_health(base_url, timeout=30)
+
+                # Create LocalProvider instance
+                self.active_provider = LocalProvider(base_url)
+                self._provider_process = process
+                self._provider_port = port
+            else:
+                # No external binary, use bundled provider (if available)
+                if provider_type == "pytorch-cpu":
+                    # PyTorch CPU can use bundled backend
+                    self.active_provider = self._get_default_provider()
+                else:
+                    raise ValueError(f"Provider {provider_type} is not installed. Please download it first.")
         elif provider_type == "remote":
             # Remote provider - will be implemented in Phase 5
             raise NotImplementedError("Remote provider not yet implemented")
@@ -122,11 +128,17 @@ class ProviderManager:
         # Bundled providers are always available
         system = platform.system()
         machine = platform.machine()
-        
+
         if system == "Darwin" and machine == "arm64":
+            # Apple Silicon gets MLX
             installed.append("bundled-mlx")
-        else:
-            installed.append("bundled-pytorch")
+
+        # PyTorch CPU is available on all platforms (check if bundled or downloaded)
+        # For now, assume it's bundled on macOS Intel, Windows, Linux
+        # Downloaded binaries will be detected below
+        if not (system == "Darwin" and machine == "arm64"):
+            # Non-Apple Silicon systems have PyTorch CPU bundled
+            installed.append("pytorch-cpu")
         
         # Check for downloaded providers (Phase 2)
         providers_dir = _get_providers_dir()

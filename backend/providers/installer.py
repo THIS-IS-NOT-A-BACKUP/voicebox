@@ -62,6 +62,14 @@ def _get_provider_download_name(provider_type: str) -> str:
     elif system == "Linux":
         platform_suffix = "linux"
         ext = ""
+    elif system == "Darwin":
+        # Detect macOS architecture
+        machine = platform.machine()
+        if machine == "arm64":
+            platform_suffix = "macos-arm64"
+        else:
+            platform_suffix = "macos-x64"
+        ext = ""
     else:
         raise ValueError(f"Provider downloads not supported on {system}")
     
