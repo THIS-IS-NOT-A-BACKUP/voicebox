@@ -91,6 +91,30 @@ jobs:
           cd providers/${{ matrix.provider }}
           python build.py
 
+      - name: Package provider for distribution
+        shell: bash
+        run: |
+          cd providers/${{ matrix.provider }}/dist
+
+          # Add platform suffix for archive name
+          if [ "${{ matrix.platform }}" == "windows-latest" ]; then
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-windows.zip"
+            # On Windows, zip the directory
+            powershell Compress-Archive -Path "tts-provider-${{ matrix.provider }}/*" -DestinationPath "$ARCHIVE_NAME"
+          elif [ "${{ matrix.platform }}" == "macos-latest" ]; then
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-macos-arm64.tar.gz"
+            tar -czf "$ARCHIVE_NAME" tts-provider-${{ matrix.provider }}/
+          elif [ "${{ matrix.platform }}" == "macos-15-intel" ]; then
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-macos-x64.tar.gz"
+            tar -czf "$ARCHIVE_NAME" tts-provider-${{ matrix.provider }}/
+          else
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-linux.tar.gz"
+            tar -czf "$ARCHIVE_NAME" tts-provider-${{ matrix.provider }}/
+          fi
+
+          echo "Created archive: $ARCHIVE_NAME"
+          ls -lh "$ARCHIVE_NAME"
+
       - name: Upload provider to R2
         shell: bash
         env:
@@ -106,31 +130,23 @@ jobs:
           aws configure set aws_secret_access_key $R2_SECRET_ACCESS_KEY
           aws configure set region auto
 
-          # Determine binary name based on platform
+          # Determine archive name based on platform
           if [ "${{ matrix.platform }}" == "windows-latest" ]; then
-            BINARY_NAME="tts-provider-${{ matrix.provider }}.exe"
-            BINARY_PATH="providers/${{ matrix.provider }}/dist/tts-provider-${{ matrix.provider }}.exe"
-          else
-            BINARY_NAME="tts-provider-${{ matrix.provider }}"
-            BINARY_PATH="providers/${{ matrix.provider }}/dist/tts-provider-${{ matrix.provider }}"
-          fi
-
-          # Add platform suffix for clarity
-          if [ "${{ matrix.platform }}" == "windows-latest" ]; then
-            UPLOAD_NAME="tts-provider-${{ matrix.provider }}-windows.exe"
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-windows.zip"
           elif [ "${{ matrix.platform }}" == "macos-latest" ]; then
-            UPLOAD_NAME="tts-provider-${{ matrix.provider }}-macos-arm64"
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-macos-arm64.tar.gz"
           elif [ "${{ matrix.platform }}" == "macos-15-intel" ]; then
-            UPLOAD_NAME="tts-provider-${{ matrix.provider }}-macos-x64"
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-macos-x64.tar.gz"
           else
-            UPLOAD_NAME="tts-provider-${{ matrix.provider }}-linux"
+            ARCHIVE_NAME="tts-provider-${{ matrix.provider }}-linux.tar.gz"
           fi
 
           # Upload to R2 (bucket: voicebox)
-          aws s3 cp "$BINARY_PATH" "s3://voicebox/providers/v${{ env.PROVIDER_VERSION }}/$UPLOAD_NAME" \
+          aws s3 cp "providers/${{ matrix.provider }}/dist/$ARCHIVE_NAME" \
+            "s3://voicebox/providers/v${{ env.PROVIDER_VERSION }}/$ARCHIVE_NAME" \
             --endpoint-url "$R2_ENDPOINT"
 
-          echo "Uploaded $UPLOAD_NAME to R2"
+          echo "Uploaded $ARCHIVE_NAME to R2"
 
   # ============================================
   # Build Main App (without bundled TTS on Win/Linux)

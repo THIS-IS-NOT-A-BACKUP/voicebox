@@ -16,7 +16,7 @@ def build_provider():
     # PyInstaller arguments
     args = [
         'main.py',
-        '--onefile',
+        '--onedir',  # Changed from --onefile to work around Windows extraction issues
         '--name', 'tts-provider-pytorch-cuda',
     ]
     
@@ -53,6 +53,18 @@ def build_provider():
         '--collect-submodules', 'jaraco',
         '--hidden-import', 'fastapi',
         '--hidden-import', 'uvicorn',
+        # Critical uvicorn imports for PyInstaller
+        '--hidden-import', 'uvicorn.logging',
+        '--hidden-import', 'uvicorn.loops',
+        '--hidden-import', 'uvicorn.loops.auto',
+        '--hidden-import', 'uvicorn.protocols',
+        '--hidden-import', 'uvicorn.protocols.http',
+        '--hidden-import', 'uvicorn.protocols.http.auto',
+        '--hidden-import', 'uvicorn.protocols.websockets',
+        '--hidden-import', 'uvicorn.protocols.websockets.auto',
+        '--hidden-import', 'uvicorn.lifespan',
+        '--hidden-import', 'uvicorn.lifespan.on',
+        '--collect-submodules', 'uvicorn',
         '--hidden-import', 'soundfile',
         '--hidden-import', 'numpy',
         '--hidden-import', 'librosa',

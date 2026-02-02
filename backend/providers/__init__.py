@@ -100,13 +100,43 @@ class ProviderManager:
                     stdout_content = ""
                     stderr_content = ""
 
+                    # Try to read available output (works on Windows and Unix)
                     try:
-                        if stdout_log.exists():
-                            stdout_content = stdout_log.read_text()
-                        if stderr_log.exists():
-                            stderr_content = stderr_log.read_text()
-                    except Exception as read_err:
-                        logger.error(f"Failed to read provider logs: {read_err}")
+                        # Use non-blocking read with timeout
+                        import threading
+                        import queue
+
+                        def enqueue_output(stream, queue):
+                            try:
+                                for line in iter(stream.readline, ''):
+                                    queue.put(line)
+                            except:
+                                pass
+
+                        stdout_queue = queue.Queue()
+                        stderr_queue = queue.Queue()
+
+                        if process.stdout:
+                            t = threading.Thread(target=enqueue_output, args=(process.stdout, stdout_queue))
+                            t.daemon = True
+                            t.start()
+
+                        if process.stderr:
+                            t2 = threading.Thread(target=enqueue_output, args=(process.stderr, stderr_queue))
+                            t2.daemon = True
+                            t2.start()
+
+                        # Give threads a moment to read
+                        import time
+                        time.sleep(0.5)
+
+                        # Collect output
+                        while not stdout_queue.empty():
+                            stdout_lines.append(stdout_queue.get_nowait())
+                        while not stderr_queue.empty():
+                            stderr_lines.append(stderr_queue.get_nowait())
+                    except Exception as ex:
+                        logger.warning(f"Could not capture subprocess output: {ex}")
 
                     logger.error(f"Provider failed to start within 30 seconds")
                     logger.error(f"Check logs at: {logs_dir}")

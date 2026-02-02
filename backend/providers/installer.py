@@ -55,13 +55,13 @@ def _get_provider_binary_name(provider_type: str) -> str:
 def _get_provider_download_name(provider_type: str) -> str:
     """Get the remote download filename for a provider type (includes platform suffix)."""
     system = platform.system()
-    
+
     if system == "Windows":
         platform_suffix = "windows"
-        ext = ".exe"
+        ext = ".zip"
     elif system == "Linux":
         platform_suffix = "linux"
-        ext = ""
+        ext = ".tar.gz"
     elif system == "Darwin":
         # Detect macOS architecture
         machine = platform.machine()
@@ -69,10 +69,10 @@ def _get_provider_download_name(provider_type: str) -> str:
             platform_suffix = "macos-arm64"
         else:
             platform_suffix = "macos-x64"
-        ext = ""
+        ext = ".tar.gz"
     else:
         raise ValueError(f"Provider downloads not supported on {system}")
-    
+
     return f"tts-provider-{provider_type}-{platform_suffix}{ext}"
 
 
@@ -84,97 +84,131 @@ def _get_provider_download_url(provider_type: str) -> str:
 
 async def download_provider(provider_type: str) -> Path:
     """
-    Download a provider binary from Cloudflare R2.
-    
+    Download and extract a provider archive from Cloudflare R2.
+
     Args:
         provider_type: Type of provider to download (e.g., "pytorch-cpu")
-        
+
     Returns:
-        Path to the downloaded provider binary
-        
+        Path to the extracted provider binary
+
     Raises:
         ValueError: If provider_type is invalid
         httpx.HTTPError: If download fails
     """
     if provider_type not in ["pytorch-cpu", "pytorch-cuda"]:
         raise ValueError(f"Provider type {provider_type} cannot be downloaded")
-    
+
     progress_manager = get_progress_manager()
     task_manager = get_task_manager()
-    
-    binary_name = _get_provider_binary_name(provider_type)
+
+    archive_name = _get_provider_download_name(provider_type)
     download_url = _get_provider_download_url(provider_type)
-    destination = _get_providers_dir() / binary_name
-    
+    providers_dir = _get_providers_dir()
+    archive_path = providers_dir / archive_name
+
     # Start tracking download
     task_manager.start_download(provider_type)
-    
+
     # Initialize progress state
     progress_manager.update_progress(
         model_name=provider_type,
         current=0,
         total=0,  # Will be updated once we get Content-Length
-        filename=binary_name,
+        filename=archive_name,
         status="downloading",
     )
-    
+
     try:
+        # Download archive
         async with httpx.AsyncClient(timeout=300.0) as client:
-            # First, get the file size
             async with client.stream("GET", download_url) as response:
                 response.raise_for_status()
-                
+
                 # Get total size from Content-Length header
                 total_size = int(response.headers.get("Content-Length", 0))
-                
+
                 if total_size > 0:
                     progress_manager.update_progress(
                         model_name=provider_type,
                         current=0,
                         total=total_size,
-                        filename=binary_name,
+                        filename=archive_name,
                         status="downloading",
                     )
-                
+
                 # Download with progress tracking
                 downloaded = 0
-                with open(destination, "wb") as f:
+                with open(archive_path, "wb") as f:
                     async for chunk in response.aiter_bytes(chunk_size=8192):
                         f.write(chunk)
                         downloaded += len(chunk)
-                        
+
                         # Update progress
                         progress_manager.update_progress(
                             model_name=provider_type,
                             current=downloaded,
                             total=total_size if total_size > 0 else downloaded,
-                            filename=binary_name,
+                            filename=archive_name,
                             status="downloading",
                         )
-        
+
+        # Extract archive
+        progress_manager.update_progress(
+            model_name=provider_type,
+            current=downloaded,
+            total=downloaded,
+            filename="Extracting...",
+            status="downloading",
+        )
+
+        import zipfile
+        import tarfile
+
+        if archive_name.endswith('.zip'):
+            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                zip_ref.extractall(providers_dir)
+        elif archive_name.endswith('.tar.gz'):
+            with tarfile.open(archive_path, 'r:gz') as tar_ref:
+                tar_ref.extractall(providers_dir)
+        else:
+            raise ValueError(f"Unsupported archive format: {archive_name}")
+
+        # Remove archive after extraction
+        archive_path.unlink()
+
+        # Get path to extracted binary
+        binary_path = get_provider_binary_path(provider_type)
+        if not binary_path:
+            raise ValueError(f"Provider binary not found after extraction")
+
+        # Make executable on Unix systems
+        if platform.system() != "Windows":
+            binary_path.chmod(0o755)
+
         # Mark as complete
         progress_manager.update_progress(
             model_name=provider_type,
             current=downloaded,
             total=downloaded,
-            filename=binary_name,
+            filename=_get_provider_binary_name(provider_type),
             status="complete",
         )
         task_manager.complete_download(provider_type)
-        
-        # Make executable on Unix systems
-        if platform.system() != "Windows":
-            destination.chmod(0o755)
-        
-        return destination
-        
+
+        return binary_path
+
     except Exception as e:
+        # Clean up archive if it exists
+        if archive_path.exists():
+            archive_path.unlink()
+
         # Mark as error
         progress_manager.update_progress(
             model_name=provider_type,
             current=0,
             total=0,
-            filename=binary_name,
+            filename=archive_name,
             status="error",
         )
         task_manager.error_download(provider_type, str(e))
@@ -184,19 +218,28 @@ async def download_provider(provider_type: str) -> Path:
 def get_provider_binary_path(provider_type: str) -> Optional[Path]:
     """
     Get the path to an installed provider binary.
-    
+
     Args:
         provider_type: Type of provider
-        
+
     Returns:
         Path to provider binary, or None if not installed
     """
+    providers_dir = _get_providers_dir()
     binary_name = _get_provider_binary_name(provider_type)
-    provider_path = _get_providers_dir() / binary_name
-    
+
+    # Check for --onedir structure (directory with binary inside)
+    provider_dir = providers_dir / f"tts-provider-{provider_type}"
+    if provider_dir.exists() and provider_dir.is_dir():
+        binary_path = provider_dir / binary_name
+        if binary_path.exists() and binary_path.is_file():
+            return binary_path
+
+    # Fallback: check for direct binary (legacy)
+    provider_path = providers_dir / binary_name
     if provider_path.exists() and provider_path.is_file():
         return provider_path
-    
+
     return None
 
 
