@@ -14,7 +14,6 @@ from datetime import datetime
 import asyncio
 import uvicorn
 import argparse
-import torch
 import tempfile
 import io
 from pathlib import Path
@@ -22,6 +21,14 @@ import uuid
 import asyncio
 import signal
 import os
+
+# Optional torch import - not available on all platforms (e.g. Windows/Linux without bundled provider)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    TORCH_AVAILABLE = False
 
 from . import database, models, profiles, history, tts, transcribe, config, export_import, channels, stories, __version__
 from .database import get_db, Generation as DBGeneration, VoiceProfile as DBVoiceProfile
@@ -72,20 +79,32 @@ async def shutdown():
 @app.get("/health", response_model=models.HealthResponse)
 async def health():
     """Health check endpoint."""
-    from huggingface_hub import hf_hub_download, constants as hf_constants
+    from huggingface_hub import constants as hf_constants
     from pathlib import Path
-    import os
 
-    tts_model = await tts.get_tts_model_async()
+    # Try to get TTS model provider, but it may not be available if dependencies aren't installed
+    tts_model = None
+    try:
+        tts_model = await tts.get_tts_model_async()
+    except ImportError as e:
+        # Provider dependencies not available (e.g., PyTorch not bundled on this platform)
+        # This is expected on Windows/Linux builds without a bundled provider
+        print(f"Provider not available: {e}")
+
     backend_type = get_backend_type()
 
     # Check for GPU availability (CUDA or MPS)
-    has_cuda = torch.cuda.is_available()
-    has_mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+    # PyTorch might not be available if no provider is bundled
+    has_cuda = False
+    has_mps = False
+    if TORCH_AVAILABLE and torch is not None:
+        has_cuda = torch.cuda.is_available()
+        has_mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+
     gpu_available = has_cuda or has_mps
 
     gpu_type = None
-    if has_cuda:
+    if has_cuda and torch is not None:
         gpu_type = f"CUDA ({torch.cuda.get_device_name(0)})"
     elif has_mps:
         gpu_type = "MPS (Apple Silicon)"
@@ -93,26 +112,27 @@ async def health():
         gpu_type = "Metal (Apple Silicon via MLX)"
 
     vram_used = None
-    if has_cuda:
+    if has_cuda and torch is not None:
         vram_used = torch.cuda.memory_allocated() / 1024 / 1024  # MB
-    
+
     # Check if model is loaded - use the same logic as model status endpoint
     model_loaded = False
     model_size = None
-    try:
-        # Use the same check as model status endpoint
-        if tts_model.is_loaded():
-            model_loaded = True
-            # Get the actual loaded model size
-            # Check _current_model_size first (more reliable for actually loaded models)
-            model_size = getattr(tts_model, '_current_model_size', None)
-            if not model_size:
-                # Fallback to model_size attribute (which should be set when model loads)
-                model_size = getattr(tts_model, 'model_size', None)
-    except Exception:
-        # If there's an error checking, assume not loaded
-        model_loaded = False
-        model_size = None
+    if tts_model is not None:
+        try:
+            # Use the same check as model status endpoint
+            if tts_model.is_loaded():
+                model_loaded = True
+                # Get the actual loaded model size
+                # Check _current_model_size first (more reliable for actually loaded models)
+                model_size = getattr(tts_model, '_current_model_size', None)
+                if not model_size:
+                    # Fallback to model_size attribute (which should be set when model loads)
+                    model_size = getattr(tts_model, 'model_size', None)
+        except Exception:
+            # If there's an error checking, assume not loaded
+            model_loaded = False
+            model_size = None
     
     # Check if default model is downloaded (cached)
     model_downloaded = None
@@ -1836,11 +1856,12 @@ async def get_active_tasks():
 def _get_gpu_status() -> str:
     """Get GPU availability status."""
     backend_type = get_backend_type()
-    if torch.cuda.is_available():
-        return f"CUDA ({torch.cuda.get_device_name(0)})"
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return "MPS (Apple Silicon)"
-    elif backend_type == "mlx":
+    if TORCH_AVAILABLE and torch is not None:
+        if torch.cuda.is_available():
+            return f"CUDA ({torch.cuda.get_device_name(0)})"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "MPS (Apple Silicon)"
+    if backend_type == "mlx":
         return "Metal (Apple Silicon via MLX)"
     return "None (CPU only)"
 
@@ -1879,8 +1900,14 @@ async def shutdown_event():
     """Run on application shutdown."""
     print("voicebox API shutting down...")
     # Unload models to free memory
-    tts.unload_tts_model()
-    transcribe.unload_whisper_model()
+    try:
+        tts.unload_tts_model()
+    except Exception as e:
+        print(f"Warning: Failed to unload TTS model: {e}")
+    try:
+        transcribe.unload_whisper_model()
+    except Exception as e:
+        print(f"Warning: Failed to unload Whisper model: {e}")
 
 
 # ============================================

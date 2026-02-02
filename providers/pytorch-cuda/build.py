@@ -57,23 +57,7 @@ def build_provider():
         '--hidden-import', 'numpy',
         '--hidden-import', 'librosa',
     ])
-    
-    # Exclude large unused modules to reduce binary size
-    args.extend([
-        '--exclude-module', 'torch.utils.tensorboard',
-        '--exclude-module', 'tensorboard',
-        '--exclude-module', 'triton',
-        '--exclude-module', 'torch._dynamo',
-        '--exclude-module', 'torch._inductor',
-        '--exclude-module', 'torch.utils.benchmark',
-        '--exclude-module', 'IPython',
-        '--exclude-module', 'matplotlib',
-        '--exclude-module', 'PIL',
-        '--exclude-module', 'cv2',
-        '--exclude-module', 'torchvision',
-        '--exclude-module', 'torchaudio',
-    ])
-    
+
     args.extend([
         '--noconfirm',
         '--clean',

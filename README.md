@@ -205,14 +205,14 @@ Voicebox uses a modular provider system to support different inference backends:
 
 - **`pytorch-cpu`** — Universal CPU provider (bundled or downloaded)
 
-  - Bundled with macOS Intel builds
-  - Downloaded on first use for Windows/Linux (~300MB)
+  - Bundled with Windows and macOS Intel builds
+  - Downloaded on first use for Linux (~300MB)
 
 - **`pytorch-cuda`** — Optional NVIDIA GPU-accelerated provider
   - Windows/Linux only (~2.4GB)
   - 4-5x faster inference on CUDA-capable GPUs
 
-macOS builds work out of the box with bundled providers. Windows and Linux users download a provider on first launch. The app automatically detects your hardware and recommends the best option. All downloadable providers are distributed via Cloudflare R2 for fast, global delivery.
+macOS and Windows builds work out of the box with bundled providers. Linux users download a provider on first launch. The app automatically detects your hardware and recommends the best option. All downloadable providers are distributed via Cloudflare R2 for fast, global delivery.
 
 ---
 

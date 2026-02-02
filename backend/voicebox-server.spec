@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = []
-hiddenimports = ['backend', 'backend.main', 'backend.config', 'backend.database', 'backend.models', 'backend.profiles', 'backend.history', 'backend.tts', 'backend.transcribe', 'backend.platform_detect', 'backend.providers', 'backend.providers.base', 'backend.providers.bundled', 'backend.providers.types', 'backend.utils.audio', 'backend.utils.cache', 'backend.utils.progress', 'backend.utils.hf_progress', 'backend.utils.validation', 'fastapi', 'uvicorn', 'sqlalchemy', 'librosa', 'soundfile', 'pkg_resources.extern', 'backend.backends', 'backend.backends.mlx_backend', 'mlx', 'mlx.core', 'mlx.nn', 'mlx_audio', 'mlx_audio.tts', 'mlx_audio.stt']
+hiddenimports = ['backend', 'backend.main', 'backend.config', 'backend.database', 'backend.models', 'backend.profiles', 'backend.history', 'backend.tts', 'backend.transcribe', 'backend.platform_detect', 'backend.providers', 'backend.providers.base', 'backend.providers.bundled', 'backend.providers.types', 'backend.utils.audio', 'backend.utils.cache', 'backend.utils.progress', 'backend.utils.hf_progress', 'backend.utils.validation', 'fastapi', 'uvicorn', 'sqlalchemy', 'librosa', 'soundfile', 'pkg_resources.extern', 'asyncio', 'asyncio.subprocess', 'concurrent.futures', 'concurrent.futures.thread', 'backend.backends', 'backend.backends.mlx_backend', 'mlx', 'mlx.core', 'mlx.nn', 'mlx_audio', 'mlx_audio.tts', 'mlx_audio.stt']
 datas += collect_data_files('mlx')
 datas += collect_data_files('mlx_audio')
 hiddenimports += collect_submodules('jaraco')

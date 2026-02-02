@@ -148,9 +148,10 @@ Voicebox uses a modular provider system to support different inference backends.
 **Hybrid Provider:**
 
 - `pytorch-cpu` — Can be bundled OR downloaded depending on platform
-  - **Bundled** with macOS Intel builds (`.dmg` for x64)
-    - Configured in `.github/workflows/release.yml` with `backend: "pytorch"`
-  - **Downloaded** on first use for Windows/Linux builds (~300MB)
+  - **Bundled** with Windows and macOS Intel builds
+    - macOS Intel: `.dmg` for x64 with `backend: "pytorch"`
+    - Windows: `.exe` installer with PyTorch CPU included
+  - **Downloaded** on first use for Linux builds (~300MB)
   - Falls back to bundled version if external binary not found
 
 **External-Only Providers:**

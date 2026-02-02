@@ -59,9 +59,16 @@ def build_server():
         # Fix for pkg_resources and jaraco namespace packages
         '--hidden-import', 'pkg_resources.extern',
         '--collect-submodules', 'jaraco',
+        # Asyncio and threading support for PyInstaller
+        '--hidden-import', 'asyncio',
+        '--hidden-import', 'asyncio.subprocess',
+        '--hidden-import', 'concurrent.futures',
+        '--hidden-import', 'concurrent.futures.thread',
     ])
 
     # Platform-specific TTS backend handling
+    system = platform.system()
+
     if is_apple_silicon():
         print("Building for Apple Silicon - including MLX dependencies (bundled)")
         args.extend([
@@ -79,13 +86,30 @@ def build_server():
             '--collect-data', 'mlx',
             '--collect-data', 'mlx_audio',
         ])
-    else:
-        print("Building for Windows/Linux - excluding PyTorch/Qwen-TTS (providers downloaded separately)")
-        # Note: PyTorch and Qwen-TTS are NOT included - users will download providers separately
-        # Only include backend abstraction (no actual TTS implementation)
+    elif system == "Windows" or (system == "Darwin" and not is_apple_silicon()):
+        # Windows and Intel macOS: Bundle PyTorch CPU provider
+        print(f"Building for {system} - including PyTorch CPU provider (bundled)")
         args.extend([
             '--hidden-import', 'backend.backends',
-            '--hidden-import', 'backend.backends.pytorch_backend',  # Keep for reference, but won't work without PyTorch
+            '--hidden-import', 'backend.backends.pytorch_backend',
+            '--hidden-import', 'torch',
+            '--hidden-import', 'transformers',
+            '--hidden-import', 'qwen_tts',
+            '--hidden-import', 'qwen_tts.inference',
+            '--hidden-import', 'qwen_tts.inference.qwen3_tts_model',
+            '--hidden-import', 'qwen_tts.inference.qwen3_tts_tokenizer',
+            '--hidden-import', 'qwen_tts.core',
+            '--hidden-import', 'qwen_tts.cli',
+            '--copy-metadata', 'qwen-tts',
+            '--collect-submodules', 'qwen_tts',
+            '--collect-data', 'qwen_tts',
+        ])
+    else:
+        # Linux: No bundled provider - users download providers separately
+        print("Building for Linux - no bundled provider (users download separately)")
+        args.extend([
+            '--hidden-import', 'backend.backends',
+            '--hidden-import', 'backend.backends.pytorch_backend',
         ])
 
     args.extend([

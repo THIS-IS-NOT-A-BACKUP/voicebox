@@ -171,15 +171,12 @@ class ProviderManager:
         machine = platform.machine()
 
         if system == "Darwin" and machine == "arm64":
-            # Apple Silicon gets MLX
+            # Apple Silicon gets MLX bundled
             installed.append("apple-mlx")
-
-        # PyTorch CPU is available on all platforms (check if bundled or downloaded)
-        # For now, assume it's bundled on macOS Intel, Windows, Linux
-        # Downloaded binaries will be detected below
-        if not (system == "Darwin" and machine == "arm64"):
-            # Non-Apple Silicon systems have PyTorch CPU bundled
+        elif system == "Windows" or (system == "Darwin" and machine != "arm64"):
+            # Windows and Intel macOS get PyTorch CPU bundled
             installed.append("pytorch-cpu")
+        # Linux: no bundled provider - users must download
         
         # Check for downloaded providers (Phase 2)
         providers_dir = _get_providers_dir()
