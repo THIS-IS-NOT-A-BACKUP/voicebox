@@ -3,12 +3,17 @@
 
 FROM python:3.12-slim
 
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend

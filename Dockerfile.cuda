@@ -2,6 +2,10 @@
 
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
 WORKDIR /app
 
 # Install Python 3.12
@@ -14,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     ffmpeg \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Python 3.12 as default
