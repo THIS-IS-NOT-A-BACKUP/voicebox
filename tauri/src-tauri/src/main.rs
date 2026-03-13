@@ -16,6 +16,7 @@ struct ServerState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     server_pid: Mutex<Option<u32>>,
     keep_running_on_close: Mutex<bool>,
+    models_dir: Mutex<Option<String>>,
 }
 
 #[command]
@@ -23,7 +24,16 @@ async fn start_server(
     app: tauri::AppHandle,
     state: State<'_, ServerState>,
     remote: Option<bool>,
+    models_dir: Option<String>,
 ) -> Result<String, String> {
+    // Store models_dir for use on restart (empty string means reset to default)
+    if let Some(ref dir) = models_dir {
+        if dir.is_empty() {
+            *state.models_dir.lock().unwrap() = None;
+        } else {
+            *state.models_dir.lock().unwrap() = Some(dir.clone());
+        }
+    }
     // Check if server is already running (managed by this app instance)
     if state.child.lock().unwrap().is_some() {
         return Ok(format!("http://127.0.0.1:{}", SERVER_PORT));
@@ -178,6 +188,56 @@ async fn start_server(
     println!("Data directory: {:?}", data_dir);
     println!("Remote mode: {}", remote.unwrap_or(false));
 
+    // Check for CUDA backend binary in data directory
+    let cuda_binary = {
+        let backends_dir = data_dir.join("backends");
+        let cuda_name = if cfg!(windows) {
+            "voicebox-server-cuda.exe"
+        } else {
+            "voicebox-server-cuda"
+        };
+        let path = backends_dir.join(cuda_name);
+        if path.exists() {
+            println!("Found CUDA backend binary at {:?}", path);
+
+            // Version check: run --version and compare to app version
+            let app_version = app.config().version.clone().unwrap_or_default();
+            let version_ok = match std::process::Command::new(&path)
+                .arg("--version")
+                .output()
+            {
+                Ok(output) => {
+                    // Output format: "voicebox-server X.Y.Z\n"
+                    let version_str = String::from_utf8_lossy(&output.stdout);
+                    let binary_version = version_str.trim().split_whitespace().last().unwrap_or("");
+                    if binary_version == app_version {
+                        println!("CUDA binary version {} matches app version", binary_version);
+                        true
+                    } else {
+                        println!(
+                            "CUDA binary version mismatch: binary={}, app={}. Falling back to CPU.",
+                            binary_version, app_version
+                        );
+                        false
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to check CUDA binary version: {}. Falling back to CPU.", e);
+                    false
+                }
+            };
+
+            if version_ok {
+                Some(path)
+            } else {
+                None
+            }
+        } else {
+            println!("No CUDA backend found, using bundled CPU binary");
+            None
+        }
+    };
+
     let sidecar_result = app.shell().sidecar("voicebox-server");
 
     let mut sidecar = match sidecar_result {
@@ -216,22 +276,44 @@ async fn start_server(
 
     println!("Sidecar command created successfully");
 
-    // Pass data directory and port to Python server
-    sidecar = sidecar.args([
-        "--data-dir",
-        data_dir
-            .to_str()
-            .ok_or_else(|| "Invalid data dir path".to_string())?,
-        "--port",
-        &SERVER_PORT.to_string(),
-    ]);
+    // Build common args
+    let data_dir_str = data_dir
+        .to_str()
+        .ok_or_else(|| "Invalid data dir path".to_string())?
+        .to_string();
+    let port_str = SERVER_PORT.to_string();
+    let is_remote = remote.unwrap_or(false);
 
-    if remote.unwrap_or(false) {
-        sidecar = sidecar.args(["--host", "0.0.0.0"]);
+    // Resolve the custom models directory from the parameter or stored state
+    let effective_models_dir = models_dir.or_else(|| state.models_dir.lock().unwrap().clone());
+    if let Some(ref dir) = effective_models_dir {
+        println!("Custom models directory: {}", dir);
     }
 
-    println!("Spawning server process...");
-    let spawn_result = sidecar.spawn();
+    // If CUDA binary exists, launch it directly instead of the bundled sidecar
+    let spawn_result = if let Some(ref cuda_path) = cuda_binary {
+        println!("Launching CUDA backend: {:?}", cuda_path);
+        let mut cmd = app.shell().command(cuda_path.to_str().unwrap());
+        cmd = cmd.args(["--data-dir", &data_dir_str, "--port", &port_str]);
+        if is_remote {
+            cmd = cmd.args(["--host", "0.0.0.0"]);
+        }
+        if let Some(ref dir) = effective_models_dir {
+            cmd = cmd.env("VOICEBOX_MODELS_DIR", dir);
+        }
+        cmd.spawn()
+    } else {
+        // Use the bundled CPU sidecar
+        sidecar = sidecar.args(["--data-dir", &data_dir_str, "--port", &port_str]);
+        if is_remote {
+            sidecar = sidecar.args(["--host", "0.0.0.0"]);
+        }
+        if let Some(ref dir) = effective_models_dir {
+            sidecar = sidecar.env("VOICEBOX_MODELS_DIR", dir);
+        }
+        println!("Spawning server process...");
+        sidecar.spawn()
+    };
 
     let (mut rx, child) = match spawn_result {
         Ok(result) => result,
@@ -550,6 +632,35 @@ async fn stop_server(state: State<'_, ServerState>) -> Result<(), String> {
 }
 
 #[command]
+async fn restart_server(
+    app: tauri::AppHandle,
+    state: State<'_, ServerState>,
+    models_dir: Option<String>,
+) -> Result<String, String> {
+    println!("restart_server: stopping current server...");
+
+    // Update stored models_dir: empty string means reset to default, non-empty means set
+    if let Some(ref dir) = models_dir {
+        if dir.is_empty() {
+            *state.models_dir.lock().unwrap() = None;
+        } else {
+            *state.models_dir.lock().unwrap() = Some(dir.clone());
+        }
+    }
+
+    // Stop the current server
+    stop_server(state.clone()).await?;
+
+    // Wait for port to be released
+    println!("restart_server: waiting for port release...");
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+    // Start server again (will auto-detect CUDA binary and use stored models_dir)
+    println!("restart_server: starting server...");
+    start_server(app, state, None, None).await
+}
+
+#[command]
 fn set_keep_server_running(state: State<'_, ServerState>, keep_running: bool) {
     *state.keep_running_on_close.lock().unwrap() = keep_running;
 }
@@ -607,6 +718,7 @@ pub fn run() {
             child: Mutex::new(None),
             server_pid: Mutex::new(None),
             keep_running_on_close: Mutex::new(false),
+            models_dir: Mutex::new(None),
         })
         .manage(audio_capture::AudioCaptureState::new())
         .manage(audio_output::AudioOutputState::new())
@@ -635,11 +747,49 @@ pub fn run() {
                 }
             }
 
+            // Enable microphone access on Linux (WebKitGTK denies getUserMedia by default)
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        use webkit2gtk::{WebViewExt, SettingsExt, PermissionRequestExt};
+                        use webkit2gtk::glib::ObjectExt;
+                        let wk_webview = webview.inner();
+
+                        // Enable media stream support in WebKitGTK settings
+                        if let Some(settings) = WebViewExt::settings(&wk_webview) {
+                            settings.set_enable_media_stream(true);
+                        }
+
+                        // Auto-grant UserMediaPermissionRequest (microphone access)
+                        // Only for trusted local origins (Tauri dev server or custom protocol)
+                        wk_webview.connect_permission_request(move |webview, request: &webkit2gtk::PermissionRequest| {
+                            if request.is::<webkit2gtk::UserMediaPermissionRequest>() {
+                                let uri = WebViewExt::uri(webview).unwrap_or_default();
+                                let is_trusted = uri.starts_with("tauri://")
+                                    || uri.starts_with("https://tauri.localhost")
+                                    || uri.starts_with("http://localhost")
+                                    || uri.starts_with("http://127.0.0.1");
+                                if is_trusted {
+                                    request.allow();
+                                    return true;
+                                }
+                                request.deny();
+                                return true;
+                            }
+                            false
+                        });
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             start_server,
             stop_server,
+            restart_server,
             set_keep_server_running,
             start_system_audio_capture,
             stop_system_audio_capture,
@@ -675,7 +825,9 @@ pub fn run() {
                 });
 
                 // Wait for frontend response or timeout
-                tokio::spawn(async move {
+                // Use tauri::async_runtime::spawn instead of tokio::spawn to avoid
+                // panics when the Tokio runtime is being dropped during app shutdown
+                tauri::async_runtime::spawn(async move {
                     tokio::select! {
                         _ = rx.recv() => {
                             // Frontend responded, close window

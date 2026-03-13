@@ -11,7 +11,7 @@ class VoiceProfileCreate(BaseModel):
     """Request model for creating a voice profile."""
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    language: str = Field(default="en", pattern="^(zh|en|ja|ko|de|fr|ru|pt|es|it)$")
+    language: str = Field(default="en", pattern="^(zh|en|ja|ko|de|fr|ru|pt|es|it|he|ar|da|el|fi|hi|ms|nl|no|pl|sv|sw|tr)$")
 
 
 class VoiceProfileResponse(BaseModel):
@@ -52,11 +52,15 @@ class ProfileSampleResponse(BaseModel):
 class GenerationRequest(BaseModel):
     """Request model for voice generation."""
     profile_id: str
-    text: str = Field(..., min_length=1, max_length=5000)
-    language: str = Field(default="en", pattern="^(zh|en|ja|ko|de|fr|ru|pt|es|it)$")
+    text: str = Field(..., min_length=1, max_length=50000)
+    language: str = Field(default="en", pattern="^(zh|en|ja|ko|de|fr|ru|pt|es|it|he)$")
     seed: Optional[int] = Field(None, ge=0)
     model_size: Optional[str] = Field(default="1.7B", pattern="^(1\\.7B|0\\.6B)$")
     instruct: Optional[str] = Field(None, max_length=500)
+    engine: Optional[str] = Field(default="qwen", pattern="^(qwen|luxtts|chatterbox|chatterbox_turbo)$")
+    max_chunk_chars: int = Field(default=800, ge=100, le=5000, description="Max characters per chunk for long text splitting")
+    crossfade_ms: int = Field(default=50, ge=0, le=500, description="Crossfade duration in ms between chunks (0 for hard cut)")
+    normalize: bool = Field(default=True, description="Normalize output audio volume")
 
 
 class GenerationResponse(BaseModel):
@@ -65,10 +69,14 @@ class GenerationResponse(BaseModel):
     profile_id: str
     text: str
     language: str
-    audio_path: str
-    duration: float
-    seed: Optional[int]
-    instruct: Optional[str]
+    audio_path: Optional[str] = None
+    duration: Optional[float] = None
+    seed: Optional[int] = None
+    instruct: Optional[str] = None
+    engine: Optional[str] = "qwen"
+    model_size: Optional[str] = None
+    status: str = "completed"
+    error: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -90,10 +98,14 @@ class HistoryResponse(BaseModel):
     profile_name: str
     text: str
     language: str
-    audio_path: str
-    duration: float
-    seed: Optional[int]
-    instruct: Optional[str]
+    audio_path: Optional[str] = None
+    duration: Optional[float] = None
+    seed: Optional[int] = None
+    instruct: Optional[str] = None
+    engine: Optional[str] = "qwen"
+    model_size: Optional[str] = None
+    status: str = "completed"
+    error: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -127,12 +139,30 @@ class HealthResponse(BaseModel):
     gpu_type: Optional[str] = None  # GPU type (CUDA, MPS, or None)
     vram_used_mb: Optional[float] = None
     backend_type: Optional[str] = None  # Backend type (mlx or pytorch)
+    backend_variant: Optional[str] = None  # Binary variant (cpu or cuda)
+
+
+class DirectoryCheck(BaseModel):
+    """Health status for a single directory."""
+    path: str
+    exists: bool
+    writable: bool
+    error: Optional[str] = None
+
+
+class FilesystemHealthResponse(BaseModel):
+    """Response model for filesystem health check."""
+    healthy: bool
+    disk_free_mb: Optional[float] = None
+    disk_total_mb: Optional[float] = None
+    directories: List[DirectoryCheck]
 
 
 class ModelStatus(BaseModel):
     """Response model for model status."""
     model_name: str
     display_name: str
+    hf_repo_id: Optional[str] = None  # HuggingFace repository ID
     downloaded: bool
     downloading: bool = False  # True if download is in progress
     size_mb: Optional[float] = None
@@ -149,11 +179,21 @@ class ModelDownloadRequest(BaseModel):
     model_name: str
 
 
+class ModelMigrateRequest(BaseModel):
+    """Request model for migrating models to a new directory."""
+    destination: str
+
+
 class ActiveDownloadTask(BaseModel):
     """Response model for active download task."""
     model_name: str
     status: str
     started_at: datetime
+    error: Optional[str] = None
+    progress: Optional[float] = None  # 0-100 percentage
+    current: Optional[int] = None     # bytes downloaded
+    total: Optional[int] = None       # total bytes
+    filename: Optional[str] = None    # current file being downloaded
 
 
 class ActiveGenerationTask(BaseModel):

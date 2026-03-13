@@ -8,14 +8,15 @@ import { LANGUAGE_CODES, type LanguageCode } from '@/lib/constants/languages';
 import { useGeneration } from '@/lib/hooks/useGeneration';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useGenerationStore } from '@/stores/generationStore';
-import { usePlayerStore } from '@/stores/playerStore';
+import { useServerStore } from '@/stores/serverStore';
 
 const generationSchema = z.object({
-  text: z.string().min(1, 'Text is required').max(5000),
+  text: z.string().min(1, 'Text is required').max(50000),
   language: z.enum(LANGUAGE_CODES as [LanguageCode, ...LanguageCode[]]),
   seed: z.number().int().optional(),
   modelSize: z.enum(['1.7B', '0.6B']).optional(),
   instruct: z.string().max(500).optional(),
+  engine: z.enum(['qwen', 'luxtts', 'chatterbox', 'chatterbox_turbo']).optional(),
 });
 
 export type GenerationFormValues = z.infer<typeof generationSchema>;
@@ -28,8 +29,10 @@ interface UseGenerationFormOptions {
 export function useGenerationForm(options: UseGenerationFormOptions = {}) {
   const { toast } = useToast();
   const generation = useGeneration();
-  const setAudioWithAutoPlay = usePlayerStore((state) => state.setAudioWithAutoPlay);
-  const setIsGenerating = useGenerationStore((state) => state.setIsGenerating);
+  const addPendingGeneration = useGenerationStore((state) => state.addPendingGeneration);
+  const maxChunkChars = useServerStore((state) => state.maxChunkChars);
+  const crossfadeMs = useServerStore((state) => state.crossfadeMs);
+  const normalizeAudio = useServerStore((state) => state.normalizeAudio);
   const [downloadingModelName, setDownloadingModelName] = useState<string | null>(null);
   const [downloadingDisplayName, setDownloadingDisplayName] = useState<string | null>(null);
 
@@ -47,6 +50,7 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       seed: undefined,
       modelSize: '1.7B',
       instruct: '',
+      engine: 'qwen',
       ...options.defaultValues,
     },
   });
@@ -65,11 +69,27 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
     }
 
     try {
-      setIsGenerating(true);
+      const engine = data.engine || 'qwen';
+      const modelName =
+        engine === 'luxtts'
+          ? 'luxtts'
+          : engine === 'chatterbox'
+            ? 'chatterbox-tts'
+            : engine === 'chatterbox_turbo'
+              ? 'chatterbox-turbo'
+              : `qwen-tts-${data.modelSize}`;
+      const displayName =
+        engine === 'luxtts'
+          ? 'LuxTTS'
+          : engine === 'chatterbox'
+            ? 'Chatterbox TTS'
+            : engine === 'chatterbox_turbo'
+              ? 'Chatterbox Turbo'
+              : data.modelSize === '1.7B'
+                ? 'Qwen TTS 1.7B'
+                : 'Qwen TTS 0.6B';
 
-      const modelName = `qwen-tts-${data.modelSize}`;
-      const displayName = data.modelSize === '1.7B' ? 'Qwen TTS 1.7B' : 'Qwen TTS 0.6B';
-
+      // Check if model needs downloading
       try {
         const modelStatus = await apiClient.getModelStatus();
         const model = modelStatus.models.find((m) => m.model_name === modelName);
@@ -82,24 +102,33 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         console.error('Failed to check model status:', error);
       }
 
+      const isQwen = engine === 'qwen';
+      // This now returns immediately with status="generating"
       const result = await generation.mutateAsync({
         profile_id: selectedProfileId,
         text: data.text,
         language: data.language,
         seed: data.seed,
-        model_size: data.modelSize,
-        instruct: data.instruct || undefined,
+        model_size: isQwen ? data.modelSize : undefined,
+        engine,
+        instruct: isQwen ? data.instruct || undefined : undefined,
+        max_chunk_chars: maxChunkChars,
+        crossfade_ms: crossfadeMs,
+        normalize: normalizeAudio,
       });
 
-      toast({
-        title: 'Generation complete!',
-        description: `Audio generated (${result.duration.toFixed(2)}s)`,
+      // Track this generation for SSE status updates
+      addPendingGeneration(result.id);
+
+      // Reset form immediately — user can start typing again
+      form.reset({
+        text: '',
+        language: data.language,
+        seed: undefined,
+        modelSize: data.modelSize,
+        instruct: '',
+        engine: data.engine,
       });
-
-      const audioUrl = apiClient.getAudioUrl(result.id);
-      setAudioWithAutoPlay(audioUrl, result.id, selectedProfileId, data.text.substring(0, 50));
-
-      form.reset();
       options.onSuccess?.(result.id);
     } catch (error) {
       toast({
@@ -108,7 +137,6 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
         variant: 'destructive',
       });
     } finally {
-      setIsGenerating(false);
       setDownloadingModelName(null);
       setDownloadingDisplayName(null);
     }
