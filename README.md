@@ -85,7 +85,7 @@ Voicebox is available now for macOS and Windows.
 | Windows (MSI) | [Latest Windows MSI](https://github.com/jamiepine/voicebox/releases/latest) |
 | Windows (Setup) | [Latest Windows Setup](https://github.com/jamiepine/voicebox/releases/latest) |
 
-> **Linux builds coming soon** — Currently blocked by GitHub runner disk space limitations.
+> **Linux** — Pre-built binaries are not yet available. Linux users can compile from source, see [Development](#development) below.
 
 ---
 
@@ -240,13 +240,24 @@ just dev     # starts backend + desktop app
 
 Install [just](https://github.com/casey/just): `brew install just` or `cargo install just`. Run `just --list` to see all commands.
 
-Also available via Makefile: `make setup && make dev` (run `make help` for all commands).
+**Prerequisites:** [Bun](https://bun.sh), [Rust](https://rustup.rs), [Python 3.11+](https://python.org), [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/), and [Xcode](https://developer.apple.com/xcode/) on macOS.
 
-**Prerequisites:** [Bun](https://bun.sh), [Rust](https://rustup.rs), [Python 3.11+](https://python.org), [XCode on macOS](https://developer.apple.com/xcode/), [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/).
+### Platform Notes
 
-**Performance:** 
-- **Apple Silicon (M1/M2/M3)**: Uses MLX backend with native Metal acceleration for 4-5x faster inference
-- **Windows/Linux/Intel Mac**: Uses PyTorch backend (CUDA GPU recommended, CPU supported but slower)
+| Platform | GPU Backend | Notes |
+|----------|-------------|-------|
+| macOS (Apple Silicon) | MLX (Metal) | 4-5x faster inference via Neural Engine |
+| Windows (NVIDIA) | PyTorch (CUDA) | `just setup` auto-installs CUDA PyTorch |
+| Windows/Linux (no NVIDIA) | PyTorch (CPU) | Works but slower |
+
+### Building Locally
+
+```bash
+just build          # Build CPU server binary + Tauri app
+just build-local    # (Windows) Build CPU + CUDA server binaries + Tauri app
+```
+
+`just build-local` produces a production-ready installer with the CUDA binary pre-placed for GPU switching.
 
 ### Project Structure
 

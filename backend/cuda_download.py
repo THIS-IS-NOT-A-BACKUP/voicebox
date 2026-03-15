@@ -129,6 +129,17 @@ async def download_cuda_binary(version: Optional[str] = None):
             except Exception as e:
                 logger.warning(f"Could not fetch checksum file — skipping verification: {e}")
 
+            # Get total size across all parts by issuing HEAD requests
+            total_size = 0
+            for part_name in parts:
+                try:
+                    head_resp = await client.head(f"{base_url}/{part_name}")
+                    content_length = int(head_resp.headers.get("content-length", 0))
+                    total_size += content_length
+                except Exception:
+                    pass
+            logger.info(f"Total download size: {total_size / 1024 / 1024:.1f} MB")
+
             # Download and concatenate parts
             total_downloaded = 0
             with open(temp_path, "wb") as f:
@@ -142,8 +153,8 @@ async def download_cuda_binary(version: Optional[str] = None):
                             f.write(chunk)
                             total_downloaded += len(chunk)
                             progress.update_progress(
-                                PROGRESS_KEY, current=total_downloaded, total=0,
-                                filename=f"Part {i + 1}/{len(parts)}",
+                                PROGRESS_KEY, current=total_downloaded, total=total_size,
+                                filename=f"Downloading CUDA backend ({i + 1}/{len(parts)})",
                                 status="downloading",
                             )
 
@@ -186,6 +197,56 @@ async def download_cuda_binary(version: Optional[str] = None):
         logger.error(f"CUDA backend download failed: {e}")
         progress.mark_error(PROGRESS_KEY, str(e))
         raise
+
+
+def get_cuda_binary_version() -> Optional[str]:
+    """Get the version of the installed CUDA binary, or None if not installed."""
+    import subprocess
+    cuda_path = get_cuda_binary_path()
+    if not cuda_path:
+        return None
+    try:
+        result = subprocess.run(
+            [str(cuda_path), "--version"],
+            capture_output=True, text=True, timeout=30,
+        )
+        # Output format: "voicebox-server 0.2.0"
+        for line in result.stdout.strip().splitlines():
+            if "voicebox-server" in line:
+                return line.split()[-1]
+    except Exception as e:
+        logger.warning(f"Could not get CUDA binary version: {e}")
+    return None
+
+
+async def check_and_update_cuda_binary():
+    """Check if the CUDA binary is outdated and auto-download if so.
+
+    Called on server startup. If a CUDA binary exists but its version
+    doesn't match the current app version, triggers a background download
+    of the updated CUDA binary. The download progress is visible to the
+    frontend via the existing SSE progress endpoint.
+    """
+    cuda_path = get_cuda_binary_path()
+    if not cuda_path:
+        return  # No CUDA binary installed, nothing to update
+
+    cuda_version = get_cuda_binary_version()
+    current_version = __version__
+
+    if cuda_version == current_version:
+        logger.info(f"CUDA binary is up to date (v{current_version})")
+        return
+
+    logger.info(
+        f"CUDA binary version mismatch: binary=v{cuda_version}, app=v{current_version}. "
+        f"Auto-downloading updated CUDA backend..."
+    )
+
+    try:
+        await download_cuda_binary()
+    except Exception as e:
+        logger.error(f"Auto-update of CUDA binary failed: {e}")
 
 
 async def delete_cuda_binary() -> bool:

@@ -22,10 +22,6 @@ jobs:
             args: "--target x86_64-apple-darwin"
             python-version: "3.12"
             backend: "pytorch"
-          - platform: "namespace-profile-voicebox"
-            args: "--bundles deb,rpm"
-            python-version: "3.12"
-            backend: "pytorch"
           - platform: "windows-latest"
             args: ""
             python-version: "3.12"
@@ -65,6 +61,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r backend/requirements.txt
+          pip install --no-deps chatterbox-tts
 
       - name: Install MLX dependencies (Apple Silicon only)
         if: matrix.backend == 'mlx'
@@ -126,7 +123,7 @@ jobs:
           p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
           p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v0.6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -150,7 +147,7 @@ jobs:
             - **macOS (Apple Silicon)**: Download the `aarch64.dmg` file - uses MLX for fast native inference
             - **macOS (Intel)**: Download the `x64.dmg` file - uses PyTorch
             - **Windows**: Download the `.msi` installer
-            - **Linux**: Download the `.AppImage` or `.deb` package
+            - **Linux**: Compile from source (see README)
 
             The app includes automatic updates - future updates will be installed automatically.
           releaseDraft: true
@@ -177,6 +174,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
           pip install -r backend/requirements.txt
+          pip install --no-deps chatterbox-tts
 
       - name: Install PyTorch with CUDA 12.1
         run: |
