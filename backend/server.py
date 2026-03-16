@@ -9,11 +9,36 @@ import sys
 import os
 
 # On Windows with --noconsole (PyInstaller), sys.stdout/stderr are None.
+# They can also be broken file objects in some edge cases.
 # Redirect to devnull to prevent crashes from print()/tqdm/logging.
-if sys.stdout is None:
+def _is_writable(stream):
+    """Check if a stream is usable for writing."""
+    if stream is None:
+        return False
+    try:
+        stream.write("")
+        return True
+    except Exception:
+        return False
+
+if not _is_writable(sys.stdout):
     sys.stdout = open(os.devnull, 'w')
-if sys.stderr is None:
+if not _is_writable(sys.stderr):
     sys.stderr = open(os.devnull, 'w')
+
+# PyInstaller + multiprocessing: child processes re-execute the frozen binary
+# with internal arguments. freeze_support() handles this and exits early.
+import multiprocessing
+multiprocessing.freeze_support()
+
+# In frozen builds, piper_phonemize's espeak-ng C library falls back to
+# /usr/share/espeak-ng-data/ which doesn't exist.  Point it at the bundled
+# data directory instead.
+if getattr(sys, 'frozen', False):
+    _meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    _espeak_data = os.path.join(_meipass, 'piper_phonemize', 'espeak-ng-data')
+    if os.path.isdir(_espeak_data):
+        os.environ.setdefault('ESPEAK_DATA_PATH', _espeak_data)
 
 # Fast path: handle --version before any heavy imports so the Rust
 # version check doesn't block for 30+ seconds loading torch etc.
