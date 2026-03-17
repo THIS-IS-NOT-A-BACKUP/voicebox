@@ -46,6 +46,8 @@ setup-python:
     {{ pip }} install -r {{ backend_dir }}/requirements.txt
     # Chatterbox pins numpy<1.26 / torch==2.6 which break on Python 3.12+
     {{ pip }} install --no-deps chatterbox-tts
+    # HumeAI TADA pins torch>=2.7,<2.8 which conflicts with our torch>=2.1
+    {{ pip }} install --no-deps hume-tada
     # Apple Silicon: install MLX backend
     if [ "$(uname -m)" = "arm64" ] && [ "$(uname)" = "Darwin" ]; then
         echo "Detected Apple Silicon — installing MLX dependencies..."
@@ -74,6 +76,7 @@ setup-python:
     }
     & "{{ pip }}" install -r {{ backend_dir }}/requirements.txt
     & "{{ pip }}" install --no-deps chatterbox-tts
+    & "{{ pip }}" install --no-deps hume-tada
     & "{{ pip }}" install git+https://github.com/QwenLM/Qwen3-TTS.git
     & "{{ pip }}" install pyinstaller ruff pytest pytest-asyncio -q
     Write-Host "Python environment ready."
@@ -205,10 +208,11 @@ build-server-cuda: _ensure-venv
     $env:PATH = "{{ venv_bin }};$env:PATH"; \
     & "{{ python }}" backend/build_binary.py --cuda; \
     if ($LASTEXITCODE -ne 0) { throw "build_binary.py --cuda failed with exit code $LASTEXITCODE" }; \
-    $dest = "$env:APPDATA/com.voicebox.app/backends"; \
+    $dest = "$env:APPDATA/sh.voicebox.app/backends/cuda"; \
+    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }; \
     New-Item -ItemType Directory -Path $dest -Force | Out-Null; \
-    Copy-Item "backend/dist/voicebox-server-cuda.exe" "$dest/voicebox-server-cuda.exe" -Force; \
-    Write-Host "Copied CUDA binary to $dest"
+    Copy-Item "backend/dist/voicebox-server-cuda/*" $dest -Recurse -Force; \
+    Write-Host "Copied CUDA backend to $dest"
 
 # Build everything locally: CPU server + CUDA server + installable Tauri app
 [windows]

@@ -15,7 +15,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import Loader from 'react-loaders';
+
 import { EffectsChainEditor } from '@/components/Effects/EffectsChainEditor';
 import { Button } from '@/components/ui/button';
 import {
@@ -56,8 +56,35 @@ import { formatDate, formatDuration, formatEngineName } from '@/lib/utils/format
 import { useGenerationStore } from '@/stores/generationStore';
 import { usePlayerStore } from '@/stores/playerStore';
 
-// OLD TABLE-BASED COMPONENT - REMOVED (can be found in git history)
-// This is the new alternate history view with fixed height rows
+// ─── Audio Bars ─────────────────────────────────────────────────────────────
+
+function AudioBars({ mode }: { mode: 'idle' | 'generating' | 'playing' }) {
+  const barColor = mode !== 'idle' ? 'bg-accent' : 'bg-muted-foreground/40';
+  return (
+    <div className="flex items-center gap-[2px] h-5">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <motion.div
+          key={`${mode}-${i}`}
+          className={`w-[3px] rounded-full ${barColor}`}
+          animate={
+            mode === 'generating'
+              ? { height: ['6px', '16px', '6px'] }
+              : mode === 'playing'
+                ? { height: ['8px', '14px', '4px', '12px', '8px'] }
+                : { height: '8px' }
+          }
+          transition={
+            mode === 'generating'
+              ? { duration: 0.6, repeat: Infinity, delay: i * 0.08, ease: 'easeInOut' }
+              : mode === 'playing'
+                ? { duration: 1.2, repeat: Infinity, delay: i * 0.15, ease: 'easeInOut' }
+                : { duration: 0.4, ease: 'easeOut' }
+          }
+        />
+      ))}
+    </div>
+  );
+}
 
 // NEW ALTERNATE HISTORY VIEW - FIXED HEIGHT ROWS WITH INFINITE SCROLL
 export function HistoryTable() {
@@ -126,13 +153,28 @@ export function HistoryTable() {
     }
   }, [historyData, page]);
 
-  // Reset to page 0 when deletions or imports occur
+  // Reset to page 0 when deletions, imports, or generation completions occur
+  const pendingCount = useGenerationStore((state) => state.pendingGenerationIds.size);
+  const prevPendingCountRef = useRef(pendingCount);
   useEffect(() => {
     if (deleteGeneration.isSuccess || importGeneration.isSuccess) {
       setPage(0);
       setAllHistory([]);
     }
   }, [deleteGeneration.isSuccess, importGeneration.isSuccess]);
+
+  useEffect(() => {
+    // A generation finished (pending count decreased) — scroll back to show it
+    if (
+      prevPendingCountRef.current > 0 &&
+      pendingCount < prevPendingCountRef.current &&
+      page !== 0
+    ) {
+      setPage(0);
+      setAllHistory([]);
+    }
+    prevPendingCountRef.current = pendingCount;
+  }, [pendingCount, page]);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {
@@ -413,7 +455,7 @@ export function HistoryTable() {
                     role={isPlayable ? 'button' : undefined}
                     tabIndex={isPlayable ? 0 : undefined}
                     className={cn(
-                      'flex items-stretch gap-4 h-26 p-3',
+                      'flex items-stretch gap-4 h-26 p-3 outline-none',
                       isPlayable && 'hover:bg-muted/70 cursor-pointer rounded-md',
                       isVersionsExpanded && 'rounded-b-none',
                     )}
@@ -446,12 +488,9 @@ export function HistoryTable() {
                   >
                     {/* Status icon */}
                     <div className="flex items-center shrink-0 w-10 justify-center overflow-hidden">
-                      <div className="scale-50">
-                        <Loader
-                          type={isGenerating ? 'line-scale' : 'line-scale-pulse-out-rapid'}
-                          active={isGenerating || isCurrentlyPlaying}
-                        />
-                      </div>
+                      <AudioBars
+                        mode={isGenerating ? 'generating' : isCurrentlyPlaying ? 'playing' : 'idle'}
+                      />
                     </div>
 
                     {/* Left side - Meta information */}

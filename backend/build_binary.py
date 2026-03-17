@@ -34,9 +34,15 @@ def build_server(cuda=False):
     binary_name = "voicebox-server-cuda" if cuda else "voicebox-server"
 
     # PyInstaller arguments
+    # CUDA builds use --onedir so we can split the output into two archives:
+    #   1. Server core (~200-400MB) — versioned with the app
+    #   2. CUDA libs (~2GB) — versioned independently (only redownloaded on
+    #      CUDA toolkit / torch major version changes)
+    # CPU builds remain --onefile for simplicity.
+    pack_mode = "--onedir" if cuda else "--onefile"
     args = [
         "server.py",  # Use server.py as entry point instead of main.py
-        "--onefile",
+        pack_mode,
         "--name",
         binary_name,
     ]
@@ -127,7 +133,13 @@ def build_server(cuda=False):
             "uvicorn",
             "--hidden-import",
             "sqlalchemy",
-            "--hidden-import",
+            # librosa uses lazy_loader which generates .pyi stub files at
+            # install time and reads them at runtime to discover submodules.
+            # --hidden-import alone doesn't bundle the stubs, causing
+            # "Cannot load imports from non-existent stub" at runtime.
+            "--collect-all",
+            "lazy_loader",
+            "--collect-all",
             "librosa",
             "--hidden-import",
             "soundfile",
@@ -159,9 +171,9 @@ def build_server(cuda=False):
             "tqdm",
             "--hidden-import",
             "requests",
-            "--collect-submodules",
-            "qwen_tts",
-            "--collect-data",
+            # qwen_tts uses inspect.getsource() at runtime to locate
+            # modeling_qwen3_tts.py — needs physical .py source files bundled
+            "--collect-all",
             "qwen_tts",
             # Fix for pkg_resources and jaraco namespace packages
             "--hidden-import",
@@ -180,6 +192,42 @@ def build_server(cuda=False):
             # needed by LuxTTS for text-to-phoneme conversion
             "--collect-all",
             "piper_phonemize",
+            # HumeAI TADA — speech-language model using Llama + flow matching
+            "--hidden-import",
+            "backend.backends.hume_backend",
+            "--hidden-import",
+            "tada",
+            "--hidden-import",
+            "tada.modules",
+            "--hidden-import",
+            "tada.modules.tada",
+            "--hidden-import",
+            "tada.modules.encoder",
+            "--hidden-import",
+            "tada.modules.decoder",
+            "--hidden-import",
+            "tada.modules.aligner",
+            "--hidden-import",
+            "tada.modules.acoustic_spkr_verf",
+            "--hidden-import",
+            "tada.nn",
+            "--hidden-import",
+            "tada.nn.vibevoice",
+            "--hidden-import",
+            "tada.utils",
+            "--hidden-import",
+            "tada.utils.gray_code",
+            "--hidden-import",
+            "tada.utils.text",
+            # DAC shim — provides dac.nn.layers.Snake1d without the real
+            # descript-audio-codec package (which pulls onnx/tensorboard via
+            # descript-audiotools). The shim is in backend/utils/dac_shim.py.
+            "--hidden-import",
+            "backend.utils.dac_shim",
+            "--hidden-import",
+            "torchaudio",
+            "--collect-submodules",
+            "tada",
         ]
     )
 
