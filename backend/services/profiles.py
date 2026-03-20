@@ -1,33 +1,30 @@
-"""
-Voice profile management module.
-"""
+"""Voice profile management module."""
 
-from typing import List, Optional
-from datetime import datetime
-import uuid
+import json as _json
+import logging
 import shutil
+import uuid
+from datetime import datetime
 from pathlib import Path
-from sqlalchemy.orm import Session
-from sqlalchemy import func, select
 
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from .. import config
+from ..database import Generation as DBGeneration, ProfileSample as DBProfileSample, VoiceProfile as DBVoiceProfile
 from ..models import (
+    EffectConfig,
+    ProfileSampleResponse,
     VoiceProfileCreate,
     VoiceProfileResponse,
-    ProfileSampleCreate,
-    ProfileSampleResponse,
 )
-from ..database import (
-    VoiceProfile as DBVoiceProfile,
-    ProfileSample as DBProfileSample,
-    Generation as DBGeneration,
-)
-from ..models import EffectConfig
-from ..utils.audio import validate_reference_audio, validate_and_load_reference_audio, load_audio, save_audio
-from ..utils.images import validate_image, process_avatar
+from ..utils.audio import save_audio, validate_and_load_reference_audio
 from ..utils.cache import _get_cache_dir, clear_profile_cache
-from .tts import get_tts_model
-from .. import config
-import json as _json
+from ..utils.images import process_avatar, validate_image
+
+logger = logging.getLogger(__name__)
+
+CLONING_ENGINES = {"qwen", "luxtts", "chatterbox", "chatterbox_turbo", "tada"}
 
 
 def _profile_to_response(
@@ -52,11 +49,47 @@ def _profile_to_response(
         language=profile.language,
         avatar_path=profile.avatar_path,
         effects_chain=effects_chain,
+        voice_type=getattr(profile, "voice_type", None) or "cloned",
+        preset_engine=getattr(profile, "preset_engine", None),
+        preset_voice_id=getattr(profile, "preset_voice_id", None),
+        design_prompt=getattr(profile, "design_prompt", None),
+        default_engine=getattr(profile, "default_engine", None),
         generation_count=generation_count,
         sample_count=sample_count,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
+
+
+def _validate_profile_fields(
+    *,
+    voice_type: str,
+    preset_engine: str | None,
+    preset_voice_id: str | None,
+    design_prompt: str | None,
+    default_engine: str | None,
+) -> str | None:
+    if voice_type == "preset":
+        if not preset_engine or not preset_voice_id:
+            return "Preset profiles require both preset_engine and preset_voice_id"
+        if default_engine and default_engine != preset_engine:
+            return "Preset profiles must use their preset_engine as default_engine"
+        return None
+
+    if voice_type == "designed":
+        if not design_prompt or not design_prompt.strip():
+            return "Designed profiles require a design_prompt"
+        if preset_engine or preset_voice_id:
+            return "Designed profiles cannot set preset_engine or preset_voice_id"
+        return None
+
+    if preset_engine or preset_voice_id:
+        return "Cloned profiles cannot set preset_engine or preset_voice_id"
+    if design_prompt:
+        return "Cloned profiles cannot set design_prompt"
+    if default_engine and default_engine not in CLONING_ENGINES:
+        return f"Cloned profiles cannot use default engine '{default_engine}'"
+    return None
 
 
 async def create_profile(
@@ -80,11 +113,32 @@ async def create_profile(
     if existing_profile:
         raise ValueError(f"A profile with the name '{data.name}' already exists. Please choose a different name.")
 
+    # Auto-set default_engine for preset profiles
+    default_engine = data.default_engine
+    voice_type = data.voice_type or "cloned"
+    if voice_type == "preset" and data.preset_engine and not default_engine:
+        default_engine = data.preset_engine
+
+    validation_error = _validate_profile_fields(
+        voice_type=voice_type,
+        preset_engine=data.preset_engine,
+        preset_voice_id=data.preset_voice_id,
+        design_prompt=data.design_prompt,
+        default_engine=default_engine,
+    )
+    if validation_error:
+        raise ValueError(validation_error)
+
     db_profile = DBVoiceProfile(
         id=str(uuid.uuid4()),
         name=data.name,
         description=data.description,
         language=data.language,
+        voice_type=voice_type,
+        preset_engine=data.preset_engine,
+        preset_voice_id=data.preset_voice_id,
+        design_prompt=data.design_prompt,
+        default_engine=default_engine,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -161,7 +215,7 @@ async def add_profile_sample(
 async def get_profile(
     profile_id: str,
     db: Session,
-) -> Optional[VoiceProfileResponse]:
+) -> VoiceProfileResponse | None:
     """
     Get a voice profile by ID.
 
@@ -182,7 +236,7 @@ async def get_profile(
 async def get_profile_samples(
     profile_id: str,
     db: Session,
-) -> List[ProfileSampleResponse]:
+) -> list[ProfileSampleResponse]:
     """
     Get all samples for a profile.
 
@@ -197,7 +251,7 @@ async def get_profile_samples(
     return [ProfileSampleResponse.model_validate(s) for s in samples]
 
 
-async def list_profiles(db: Session) -> List[VoiceProfileResponse]:
+async def list_profiles(db: Session) -> list[VoiceProfileResponse]:
     """
     List all voice profiles with generation and sample counts.
 
@@ -238,7 +292,7 @@ async def update_profile(
     profile_id: str,
     data: VoiceProfileCreate,
     db: Session,
-) -> Optional[VoiceProfileResponse]:
+) -> VoiceProfileResponse | None:
     """
     Update a voice profile.
 
@@ -262,9 +316,27 @@ async def update_profile(
         if existing_profile:
             raise ValueError(f"A profile with the name '{data.name}' already exists. Please choose a different name.")
 
+    voice_type = getattr(profile, "voice_type", None) or "cloned"
+    preset_engine = getattr(profile, "preset_engine", None)
+    preset_voice_id = getattr(profile, "preset_voice_id", None)
+    design_prompt = getattr(profile, "design_prompt", None)
+    default_engine = data.default_engine if data.default_engine is not None else getattr(profile, "default_engine", None)
+
+    validation_error = _validate_profile_fields(
+        voice_type=voice_type,
+        preset_engine=preset_engine,
+        preset_voice_id=preset_voice_id,
+        design_prompt=design_prompt,
+        default_engine=default_engine,
+    )
+    if validation_error:
+        raise ValueError(validation_error)
+
     profile.name = data.name
     profile.description = data.description
     profile.language = data.language
+    if data.default_engine is not None:
+        profile.default_engine = data.default_engine or None  # empty string → NULL
     profile.updated_at = datetime.utcnow()
 
     db.commit()
@@ -345,7 +417,7 @@ async def update_profile_sample(
     sample_id: str,
     reference_text: str,
     db: Session,
-) -> Optional[ProfileSampleResponse]:
+) -> ProfileSampleResponse | None:
     """
     Update a profile sample's reference text.
 
@@ -382,19 +454,56 @@ async def create_voice_prompt_for_profile(
     engine: str = "qwen",
 ) -> dict:
     """
-    Create a combined voice prompt from all samples in a profile.
+    Create a voice prompt from a profile.
+
+    For cloned profiles: combines all audio samples into a voice prompt.
+    For preset profiles: returns the engine-specific preset voice reference.
+    For designed profiles: returns the text design prompt (future).
 
     Args:
         profile_id: Profile ID
         db: Database session
         use_cache: Whether to use cached prompts
-        engine: TTS engine to create prompt for ("qwen" or "luxtts")
+        engine: TTS engine to create prompt for
 
     Returns:
         Voice prompt dictionary
     """
     from ..backends import get_tts_backend_for_engine
 
+    profile = db.query(DBVoiceProfile).filter_by(id=profile_id).first()
+    if not profile:
+        raise ValueError(f"Profile not found: {profile_id}")
+
+    voice_type = getattr(profile, "voice_type", None) or "cloned"
+
+    # ── Preset profiles: return engine-specific voice reference ──
+    if voice_type == "preset":
+        if not profile.preset_engine or not profile.preset_voice_id:
+            raise ValueError(f"Preset profile {profile_id} is missing preset engine metadata")
+        if profile.preset_engine != engine:
+            raise ValueError(
+                f"Preset profile {profile_id} only supports engine '{profile.preset_engine}', not '{engine}'"
+            )
+        return {
+            "voice_type": "preset",
+            "preset_engine": profile.preset_engine,
+            "preset_voice_id": profile.preset_voice_id,
+        }
+
+    # ── Designed profiles: return text description (future) ──
+    if voice_type == "designed":
+        if not profile.design_prompt or not profile.design_prompt.strip():
+            raise ValueError(f"Designed profile {profile_id} is missing design_prompt")
+        return {
+            "voice_type": "designed",
+            "design_prompt": profile.design_prompt,
+        }
+
+    if engine not in CLONING_ENGINES:
+        raise ValueError(f"Engine '{engine}' does not support cloned voice profiles")
+
+    # ── Cloned profiles: create from audio samples ──
     samples = db.query(DBProfileSample).filter_by(profile_id=profile_id).all()
 
     if not samples:
@@ -410,34 +519,34 @@ async def create_voice_prompt_for_profile(
             use_cache=use_cache,
         )
         return voice_prompt
-    else:
-        audio_paths = [s.audio_path for s in samples]
-        reference_texts = [s.reference_text for s in samples]
 
-        combined_audio, combined_text = await tts_model.combine_voice_prompts(
-            audio_paths,
-            reference_texts,
-        )
+    audio_paths = [s.audio_path for s in samples]
+    reference_texts = [s.reference_text for s in samples]
 
-        # Save combined audio to cache directory (persistent)
-        # Create a hash of sample IDs to identify this specific combination
-        import hashlib
+    combined_audio, combined_text = await tts_model.combine_voice_prompts(
+        audio_paths,
+        reference_texts,
+    )
 
-        sample_ids_str = "-".join(sorted([s.id for s in samples]))
-        combination_hash = hashlib.md5(sample_ids_str.encode()).hexdigest()[:12]
+    # Save combined audio to cache directory (persistent)
+    # Create a hash of sample IDs to identify this specific combination
+    import hashlib
 
-        cache_dir = _get_cache_dir()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        combined_path = cache_dir / f"combined_{profile_id}_{combination_hash}.wav"
+    sample_ids_str = "-".join(sorted([s.id for s in samples]))
+    combination_hash = hashlib.md5(sample_ids_str.encode()).hexdigest()[:12]
 
-        save_audio(combined_audio, str(combined_path), 24000)
+    cache_dir = _get_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    combined_path = cache_dir / f"combined_{profile_id}_{combination_hash}.wav"
 
-        voice_prompt, _ = await tts_model.create_voice_prompt(
-            str(combined_path),
-            combined_text,
-            use_cache=use_cache,
-        )
-        return voice_prompt
+    save_audio(combined_audio, str(combined_path), 24000)
+
+    voice_prompt, _ = await tts_model.create_voice_prompt(
+        str(combined_path),
+        combined_text,
+        use_cache=use_cache,
+    )
+    return voice_prompt
 
 
 async def upload_avatar(
