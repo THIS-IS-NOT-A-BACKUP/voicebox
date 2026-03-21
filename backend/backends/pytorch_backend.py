@@ -14,11 +14,14 @@ from . import TTSBackend, STTBackend, LANGUAGE_CODE_TO_NAME, WHISPER_HF_REPOS
 from .base import (
     is_model_cached,
     get_torch_device,
+    empty_device_cache,
+    manual_seed,
     combine_voice_prompts as _combine_voice_prompts,
     model_load_progress,
 )
 from ..utils.cache import get_cache_key, get_cached_voice_prompt, cache_voice_prompt
 from ..utils.audio import load_audio
+from ..utils.hf_offline_patch import force_offline_if_cached
 
 
 class PyTorchTTSBackend:
@@ -96,18 +99,19 @@ class PyTorchTTSBackend:
             model_path = self._get_model_path(model_size)
             logger.info("Loading TTS model %s on %s...", model_size, self.device)
 
-            if self.device == "cpu":
-                self.model = Qwen3TTSModel.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float32,
-                    low_cpu_mem_usage=False,
-                )
-            else:
-                self.model = Qwen3TTSModel.from_pretrained(
-                    model_path,
-                    device_map=self.device,
-                    torch_dtype=torch.bfloat16,
-                )
+            with force_offline_if_cached(is_cached, model_name):
+                if self.device == "cpu":
+                    self.model = Qwen3TTSModel.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float32,
+                        low_cpu_mem_usage=False,
+                    )
+                else:
+                    self.model = Qwen3TTSModel.from_pretrained(
+                        model_path,
+                        device_map=self.device,
+                        torch_dtype=torch.bfloat16,
+                    )
 
         self._current_model_size = model_size
         self.model_size = model_size
@@ -120,8 +124,7 @@ class PyTorchTTSBackend:
             self.model = None
             self._current_model_size = None
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            empty_device_cache(self.device)
 
             logger.info("TTS model unloaded")
 
@@ -213,9 +216,7 @@ class PyTorchTTSBackend:
             """Run synchronous generation in thread pool."""
             # Set seed if provided
             if seed is not None:
-                torch.manual_seed(seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed(seed)
+                manual_seed(seed, self.device)
 
             # Generate audio - this is the blocking operation
             wavs, sample_rate = self.model.generate_voice_clone(
@@ -282,8 +283,9 @@ class PyTorchSTTBackend:
             model_name = WHISPER_HF_REPOS.get(model_size, f"openai/whisper-{model_size}")
             logger.info("Loading Whisper model %s on %s...", model_size, self.device)
 
-            self.processor = WhisperProcessor.from_pretrained(model_name)
-            self.model = WhisperForConditionalGeneration.from_pretrained(model_name)
+            with force_offline_if_cached(is_cached, progress_model_name):
+                self.processor = WhisperProcessor.from_pretrained(model_name)
+                self.model = WhisperForConditionalGeneration.from_pretrained(model_name)
 
         self.model.to(self.device)
         self.model_size = model_size
@@ -297,8 +299,7 @@ class PyTorchSTTBackend:
             self.model = None
             self.processor = None
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            empty_device_cache(self.device)
 
             logger.info("Whisper model unloaded")
 
