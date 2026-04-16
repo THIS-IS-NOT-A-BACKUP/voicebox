@@ -10,6 +10,7 @@ import { useGeneration } from '@/lib/hooks/useGeneration';
 import { useModelDownloadToast } from '@/lib/hooks/useModelDownloadToast';
 import { useGenerationStore } from '@/stores/generationStore';
 import { useServerStore } from '@/stores/serverStore';
+import { useUIStore } from '@/stores/uiStore';
 
 const generationSchema = z.object({
   text: z.string().min(1, '').max(50000),
@@ -45,6 +46,7 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
   const maxChunkChars = useServerStore((state) => state.maxChunkChars);
   const crossfadeMs = useServerStore((state) => state.crossfadeMs);
   const normalizeAudio = useServerStore((state) => state.normalizeAudio);
+  const selectedEngine = useUIStore((state) => state.selectedEngine);
   const [downloadingModelName, setDownloadingModelName] = useState<string | null>(null);
   const [downloadingDisplayName, setDownloadingDisplayName] = useState<string | null>(null);
 
@@ -62,7 +64,7 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
       seed: undefined,
       modelSize: '1.7B',
       instruct: '',
-      engine: 'qwen',
+      engine: (selectedEngine as GenerationFormValues['engine']) || 'qwen',
       ...options.defaultValues,
     },
   });
@@ -134,7 +136,9 @@ export function useGenerationForm(options: UseGenerationFormOptions = {}) {
 
       const hasModelSizes =
         engine === 'qwen' || engine === 'qwen_custom_voice' || engine === 'tada';
-      const supportsInstruct = engine === 'qwen' || engine === 'qwen_custom_voice';
+      // Only Qwen CustomVoice actually honors the instruct kwarg at model level.
+      // Base Qwen3-TTS accepts the kwarg but ignores it.
+      const supportsInstruct = engine === 'qwen_custom_voice';
       const effectsChain = options.getEffectsChain?.();
       // This now returns immediately with status="generating"
       const result = await generation.mutateAsync({
