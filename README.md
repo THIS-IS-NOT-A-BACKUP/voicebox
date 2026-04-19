@@ -23,6 +23,9 @@
   <a href="https://github.com/jamiepine/voicebox/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/jamiepine/voicebox?style=flat" alt="License" />
   </a>
+  <a href="https://deepwiki.com/jamiepine/voicebox">
+    <img src="https://img.shields.io/static/v1?label=Ask&message=DeepWiki&color=5B6EF7" alt="Ask DeepWiki" />
+  </a>
 </p>
 
 <p align="center">
@@ -30,7 +33,8 @@
   <a href="https://docs.voicebox.sh">Docs</a> •
   <a href="#download">Download</a> •
   <a href="#features">Features</a> •
-  <a href="#api">API</a>
+  <a href="#api">API</a> •
+  <a href="docs/content/docs/overview/troubleshooting.mdx">Troubleshooting</a>
 </p>
 
 <br/>
@@ -59,13 +63,14 @@
 
 ## What is Voicebox?
 
-Voicebox is a **local-first voice cloning studio** — a free and open-source alternative to ElevenLabs. Clone voices from a few seconds of audio, generate speech in 23 languages across 5 TTS engines, apply post-processing effects, and compose multi-voice projects with a timeline editor.
+Voicebox is a **local-first voice cloning studio** — a free and open-source alternative to ElevenLabs. Clone voices from a few seconds of audio or pick from 50+ preset voices, generate speech in 23 languages across 7 TTS engines, apply post-processing effects, and compose multi-voice projects with a timeline editor.
 
 - **Complete privacy** — models and voice data stay on your machine
-- **5 TTS engines** — Qwen3-TTS, LuxTTS, Chatterbox Multilingual, Chatterbox Turbo, and HumeAI TADA
+- **7 TTS engines** — Qwen3-TTS, Qwen CustomVoice, LuxTTS, Chatterbox Multilingual, Chatterbox Turbo, HumeAI TADA, and Kokoro
+- **Cloning and preset voices** — zero-shot cloning from a reference sample, or curated preset voices via Kokoro (50 voices) and Qwen CustomVoice (9 voices)
 - **23 languages** — from English to Arabic, Japanese, Hindi, Swahili, and more
 - **Post-processing effects** — pitch shift, reverb, delay, chorus, compression, and filters
-- **Expressive speech** — paralinguistic tags like `[laugh]`, `[sigh]`, `[gasp]` via Chatterbox Turbo
+- **Expressive speech** — paralinguistic tags like `[laugh]`, `[sigh]`, `[gasp]` via Chatterbox Turbo; natural-language delivery control via Qwen CustomVoice
 - **Unlimited length** — auto-chunking with crossfade for scripts, articles, and chapters
 - **Stories editor** — multi-track timeline for conversations, podcasts, and narratives
 - **API-first** — REST API for integrating voice synthesis into your own projects
@@ -87,21 +92,25 @@ Voicebox is a **local-first voice cloning studio** — a free and open-source al
 
 > **Linux** — Pre-built binaries are not yet available. See [voicebox.sh/linux-install](https://voicebox.sh/linux-install) for build-from-source instructions.
 
+> **Having trouble?** See the [Troubleshooting Guide](docs/content/docs/overview/troubleshooting.mdx) for common install, generation, model-download, and GPU issues.
+
 ---
 
 ## Features
 
 ### Multi-Engine Voice Cloning
 
-Five TTS engines with different strengths, switchable per-generation:
+Seven TTS engines with different strengths, switchable per-generation:
 
 | Engine                      | Languages | Strengths                                                                                                                                |
 | --------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | **Qwen3-TTS** (0.6B / 1.7B) | 10        | High-quality multilingual cloning, delivery instructions ("speak slowly", "whisper")                                                     |
+| **Qwen CustomVoice**        | 10        | 9 curated preset voices with natural-language delivery control — no reference audio required                                             |
 | **LuxTTS**                  | English   | Lightweight (~1GB VRAM), 48kHz output, 150x realtime on CPU                                                                              |
 | **Chatterbox Multilingual** | 23        | Broadest language coverage — Arabic, Danish, Finnish, Greek, Hebrew, Hindi, Malay, Norwegian, Polish, Swahili, Swedish, Turkish and more |
 | **Chatterbox Turbo**        | English   | Fast 350M model with paralinguistic emotion/sound tags                                                                                   |
 | **TADA** (1B / 3B)          | 10        | HumeAI speech-language model — 700s+ coherent audio, text-acoustic dual alignment                                                        |
+| **Kokoro**                  | 8         | 50 curated preset voices, tiny 82M model, fast CPU inference                                                                             |
 
 ### Emotions & Paralinguistic Tags
 
@@ -236,7 +245,7 @@ Full API documentation available at `http://localhost:17493/docs`.
 | Frontend      | React, TypeScript, Tailwind CSS                   |
 | State         | Zustand, React Query                              |
 | Backend       | FastAPI (Python)                                  |
-| TTS Engines   | Qwen3-TTS, LuxTTS, Chatterbox, Chatterbox Turbo, TADA |
+| TTS Engines   | Qwen3-TTS, Qwen CustomVoice, LuxTTS, Chatterbox, Chatterbox Turbo, TADA, Kokoro |
 | Effects       | Pedalboard (Spotify)                              |
 | Transcription | Whisper / Whisper Turbo (PyTorch or MLX)          |
 | Inference     | MLX (Apple Silicon) / PyTorch (CUDA/ROCm/XPU/CPU) |
@@ -254,6 +263,8 @@ Full API documentation available at `http://localhost:17493/docs`.
 | **More Models**         | XTTS, Bark, and other open-source voice models  |
 | **Plugin Architecture** | Extend with custom models and effects          |
 | **Mobile Companion**    | Control Voicebox from your phone               |
+
+For the **full engineering status, open-issue triage, and prioritized work queue**, see [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — a living document that tracks what's shipped, what's in-flight, candidate TTS engines under evaluation, and why we've accepted or backlogged specific integrations.
 
 ---
 
